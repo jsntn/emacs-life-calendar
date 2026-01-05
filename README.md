@@ -47,7 +47,7 @@ Add to `packages.el`:
 M-x life-calendar
 ```
 
-On first use, you will be prompted to enter your birthday using org-mode's date picker.  The birthday is saved automatically and remembered for future sessions.
+On first use, you will be prompted to enter your birthday (in YYYY-MM-DD format).  The birthday is saved automatically and remembered for future sessions.
 
 ### Keybindings
 
@@ -140,7 +140,6 @@ The exact count depends on the alignment between your birthday's day-of-week and
 ## Requirements
 
 - Emacs 27.1+
-- org-mode 8.0+ (for date picker)
 
 ## License
 

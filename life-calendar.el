@@ -6,7 +6,7 @@
 ;; URL: https://github.com/vshender/emacs-life-calendar
 ;; Version: 0.1.0
 ;; Keywords: calendar, visualization
-;; Package-Requires: ((emacs "27.1") (org "8.0"))
+;; Package-Requires: ((emacs "27.1"))
 ;; SPDX-License-Identifier: ISC
 
 ;; This file is not part of GNU Emacs.
@@ -39,7 +39,7 @@
 
 ;;; Code:
 
-(require 'org)
+(require 'calendar)
 
 ;;; Customization
 
@@ -206,6 +206,23 @@ Otherwise, calculate based on window width."
 (defun life-calendar--add-days (time days)
   "Add DAYS to TIME and return the new time."
   (time-add time (seconds-to-time (* days 24 60 60))))
+
+(defun life-calendar--read-date (prompt)
+  "Read a date from the user with PROMPT, returning YYYY-MM-DD string.
+Validates the date format and signals an error if invalid or empty."
+  (let ((input (read-string (concat prompt " (YYYY-MM-DD): "))))
+    (cond
+     ((string-empty-p input)
+      (user-error "Date is required"))
+     ((string-match "\\`\\([0-9]\\{4\\}\\)-\\([0-9]\\{2\\}\\)-\\([0-9]\\{2\\}\\)\\'" input)
+      (let ((year (string-to-number (match-string 1 input)))
+            (month (string-to-number (match-string 2 input)))
+            (day (string-to-number (match-string 3 input))))
+        (if (calendar-date-is-valid-p (list month day year))
+            input
+          (user-error "Invalid date: %s" input))))
+     (t
+      (user-error "Invalid date format.  Please use YYYY-MM-DD")))))
 
 ;;; Age and Week Calculation
 
@@ -382,10 +399,10 @@ Also sets `life-calendar--num-columns' as a side effect."
 
 (defun life-calendar--ensure-birthday ()
   "Ensure `life-calendar-birthday' is set.
-If not set, prompt the user to enter their birthday using `org-read-date'
-and save the value for future sessions."
+If not set, prompt the user to enter their birthday and save the value
+for future sessions."
   (unless life-calendar-birthday
-    (let ((date (org-read-date nil nil nil "Enter your birthday: ")))
+    (let ((date (life-calendar--read-date "Enter your birthday")))
       (customize-save-variable 'life-calendar-birthday date)
       (message "Birthday saved: %s" date)))
   life-calendar-birthday)
