@@ -23,6 +23,17 @@
 ;; On first use, you will be prompted to enter your birthday.
 ;; The birthday is saved and remembered for future sessions.
 ;;
+;; Navigation:
+;;   f/b, C-f/C-b, arrows  -- move by week
+;;   n/p, C-n/C-p, up/down -- move by row (multiple years in multi-column view)
+;;   ]/[, M-f/M-b          -- move by year
+;;   M-<, M->              -- first/last week
+;;   C-a, C-e, Home/End    -- beginning/end of row
+;;   .                     -- jump to current week
+;;   g                     -- refresh
+;;   ?                     -- help (show keybindings)
+;;   q                     -- quit
+;;
 ;; Customization:
 ;;   M-x customize-group RET life-calendar RET
 
@@ -113,9 +124,8 @@ If a positive integer, display exactly that many columns."
   "Face for the header in the life calendar."
   :group 'life-calendar)
 
-;;; Internal Functions
+;;; Layout
 
-;; Layout constants for multi-column display
 (defconst life-calendar--age-label-width 5
   "Width of the age label (e.g., \"  0: \").")
 
@@ -129,6 +139,10 @@ If a positive integer, display exactly that many columns."
 (defconst life-calendar--column-gap 2
   "Gap between columns in multi-column display.")
 
+(defvar-local life-calendar--num-columns nil
+  "Number of columns used in the current calendar display.
+This is set during rendering and used for navigation.")
+
 (defun life-calendar--calculate-columns (window-width)
   "Calculate the number of columns that fit in WINDOW-WIDTH.
 If `life-calendar-columns' is set to a positive integer, return that value.
@@ -140,6 +154,8 @@ Otherwise, calculate based on window width."
     (max 1
          (1+ (/ (- window-width life-calendar--column-width)
                 (+ life-calendar--column-width life-calendar--column-gap))))))
+
+;;; Date Utilities
 
 ;; Dates are represented as Emacs time values with hours, minutes, and seconds
 ;; set to zero.  UTC is used to avoid daylight saving time issues with date
@@ -166,6 +182,11 @@ Otherwise, calculate based on window width."
                (mapcar #'string-to-number (split-string date-string "-"))))
     (life-calendar--encode-date year month day)))
 
+(defun life-calendar--validate-birthday (birth-time)
+  "Signal an error if BIRTH-TIME is in the future."
+  (when (time-less-p (life-calendar--current-date) birth-time)
+    (user-error "Birthday cannot be in the future")))
+
 (defun life-calendar--day-of-week (time)
   "Return day of week for TIME (0=Sunday, 1=Monday, ..., 6=Saturday)."
   (decoded-time-weekday (life-calendar--decode-date time)))
@@ -185,6 +206,8 @@ Otherwise, calculate based on window width."
 (defun life-calendar--add-days (time days)
   "Add DAYS to TIME and return the new time."
   (time-add time (seconds-to-time (* days 24 60 60))))
+
+;;; Age and Week Calculation
 
 (defun life-calendar--nth-birthday (birth-time n)
   "Return the date of the Nth birthday given BIRTH-TIME.
@@ -236,10 +259,12 @@ This is typically 52, occasionally 53."
    (life-calendar--nth-birthday birth-time (1+ year-num))))
 
 (defun life-calendar--current-age (birth-time)
-  "Return (YEARS-LIVED WEEKS-LIVED) for today given BIRTH-TIME.
+  "Return (YEARS-LIVED . WEEKS-LIVED) for today given BIRTH-TIME.
 YEARS-LIVED is the number of complete years, WEEKS-LIVED is the number
 of complete weeks within the current year.  Uses the configured week
-start day for accurate calculation."
+start day for accurate calculation.
+Signals an error if BIRTH-TIME is in the future."
+  (life-calendar--validate-birthday birth-time)
   (let* ((today (life-calendar--current-date))
          ;; Calculate years lived by decoding the time difference.
          ;; Subtracting the epoch year converts the decoded year to a duration.
@@ -252,7 +277,9 @@ start day for accurate calculation."
                        (life-calendar--effective-week-start-dow birth-time)
                        current-birthday
                        today)))
-    (list years-lived weeks-lived)))
+    (cons years-lived weeks-lived)))
+
+;;; Rendering
 
 (defun life-calendar--render-single-week-header ()
   "Render a single week number header (without newline).
@@ -274,7 +301,7 @@ Shows week numbers at positions 1, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50."
         (gap (make-string life-calendar--column-gap ?\s))
         (parts '()))
     (push single-header parts)
-    (dotimes (col (1- num-columns))
+    (dotimes (_ (1- num-columns))
       (push gap parts)
       (push single-header parts))
     (concat (apply #'concat (nreverse parts)) "\n")))
@@ -295,16 +322,19 @@ Returns a string of exactly `life-calendar--column-width' characters."
              (is-current-week (and is-current-year (= week weeks-lived)))
              (is-past-week (or is-past-year
                                (and is-current-year (< week weeks-lived))))
-             (char (cond
-                    (is-current-week
-                     (propertize life-calendar-current-char
-                                 'face 'life-calendar-current-face))
-                    (is-past-week
-                     (propertize life-calendar-past-char
-                                 'face 'life-calendar-past-face))
-                    (t
-                     (propertize life-calendar-future-char
-                                 'face 'life-calendar-future-face)))))
+             (face (cond
+                    (is-current-week 'life-calendar-current-face)
+                    (is-past-week 'life-calendar-past-face)
+                    (t 'life-calendar-future-face)))
+             (char-str (cond
+                        (is-current-week life-calendar-current-char)
+                        (is-past-week life-calendar-past-char)
+                        (t life-calendar-future-char)))
+             (char (propertize char-str
+                               'face face
+                               'life-calendar-week-p t
+                               'life-calendar-year year
+                               'life-calendar-week week)))
         (push char parts)))
     ;; Pad to full column width if needed (some years have 52 weeks)
     (let* ((content (apply #'concat (nreverse parts)))
@@ -316,13 +346,16 @@ Returns a string of exactly `life-calendar--column-width' characters."
 
 (defun life-calendar--render-calendar (birth-time years)
   "Render the life calendar for BIRTH-TIME with YEARS total years.
-Returns a string containing the rendered calendar."
-  (pcase-let* ((`(,years-lived ,weeks-lived)
-                (life-calendar--current-age birth-time))
-               (years (max years (1+ years-lived)))
-               (num-columns (life-calendar--calculate-columns (window-width)))
-               (gap (make-string life-calendar--column-gap ?\s))
-               (parts '()))
+Returns a string containing the rendered calendar.
+Also sets `life-calendar--num-columns' as a side effect."
+  (let* ((age (life-calendar--current-age birth-time))
+         (years-lived (car age))
+         (weeks-lived (cdr age))
+         (years (max years (1+ years-lived)))
+         (num-columns (life-calendar--calculate-columns (window-width)))
+         (gap (make-string life-calendar--column-gap ?\s))
+         (parts '()))
+    (setq life-calendar--num-columns num-columns)
     ;; Header
     (push (propertize
            (format "Life Calendar - %d years, %d weeks old\n\n"
@@ -345,6 +378,8 @@ Returns a string containing the rendered calendar."
         (setq year (1+ year))))
     (apply #'concat (nreverse parts))))
 
+;;; Birthday Management
+
 (defun life-calendar--ensure-birthday ()
   "Ensure `life-calendar-birthday' is set.
 If not set, prompt the user to enter their birthday using `org-read-date'
@@ -355,12 +390,255 @@ and save the value for future sessions."
       (message "Birthday saved: %s" date)))
   life-calendar-birthday)
 
+;;; Navigation
+
+(defun life-calendar--on-week-p (pos)
+  "Return non-nil if POS is on a week square."
+  (when (<= (point-min) pos (point-max))
+    (get-text-property pos 'life-calendar-week-p)))
+
+(defun life-calendar--week-at-point (pos)
+  "Return (YEAR . WEEK-NUM) at POS, or nil if not on a week."
+  (when (life-calendar--on-week-p pos)
+    (cons (get-text-property pos 'life-calendar-year)
+          (get-text-property pos 'life-calendar-week))))
+
+(defun life-calendar--find-next-week (pos)
+  "Find position of next week square after POS.
+Returns the position or nil if not found."
+  (let ((next (1+ pos))
+        (pmax (point-max)))
+    (while (and (<= next pmax)
+                (not (life-calendar--on-week-p next)))
+      (setq next (next-single-property-change
+                  next 'life-calendar-week-p nil (1+ pmax))))
+    (when (and (<= next pmax)
+               (life-calendar--on-week-p next))
+      next)))
+
+(defun life-calendar--find-previous-week (pos)
+  "Find position of previous week square before POS.
+Returns the position or nil if not found."
+  (let ((prev (1- pos))
+        (pmin (point-min)))
+    (while (and (<= pmin prev)
+                (not (life-calendar--on-week-p prev)))
+      ;; Pass (1+ prev) because `previous-single-property-change' starts
+      ;; examining from position-1 due to Emacs cursor model asymmetry.
+      ;; Wrap with (1- ...) because the function returns the boundary
+      ;; position, and we want the character before it (the actual week).
+      (setq prev (1- (previous-single-property-change
+                      (1+ prev) 'life-calendar-week-p nil pmin))))
+    (when (and (<= pmin prev)
+               (life-calendar--on-week-p prev))
+      prev)))
+
+(defun life-calendar--find-week (target-year target-week)
+  "Find buffer position of week TARGET-WEEK in year TARGET-YEAR.
+Returns position or nil if not found."
+  (let ((pos (point-min))
+        (found nil))
+    (while (and (not found)
+                (setq pos (life-calendar--find-next-week pos)))
+      (let ((info (life-calendar--week-at-point pos)))
+        (when (and (= (car info) target-year)
+                   (= (cdr info) target-week))
+          (setq found pos))))
+    found))
+
+(defun life-calendar--move-years (delta &optional error-message)
+  "Move point to the same week DELTA years forward/backward.
+DELTA can be positive (forward) or negative (backward).
+ERROR-MESSAGE is shown when target year doesn't exist."
+  (let ((info (life-calendar--week-at-point (point))))
+    (if (not info)
+        ;; Not on a week, find nearest week.
+        (if (> delta 0)
+            (life-calendar-next-week)
+          (life-calendar-previous-week))
+      (let* ((cur-year (car info))
+             (cur-week (cdr info))
+             (target-year (+ cur-year delta)))
+        (if (< target-year 0)
+            (message (or error-message "Year not found"))
+          ;; Try exact week first, then week-1 for 53/52 weeks difference.
+          (let ((pos (or (life-calendar--find-week target-year cur-week)
+                         (life-calendar--find-week target-year (1- cur-week)))))
+            (if pos
+                (goto-char pos)
+              (message (or error-message "Year not found")))))))))
+
+;;; Commands
+
+(defun life-calendar-not-implemented ()
+  "Signal error for commands not available in `life-calendar-mode'."
+  (interactive)
+  (error "%s not available in life-calendar"
+         (global-key-binding (this-command-keys))))
+
+(defun life-calendar-refresh ()
+  "Refresh the life calendar display."
+  (interactive)
+  (when (eq major-mode 'life-calendar-mode)
+    (let* ((birthday (life-calendar--ensure-birthday))
+           (birth-time (life-calendar--parse-date birthday))
+           (age (life-calendar--current-age birth-time))
+           (inhibit-read-only t))
+      (erase-buffer)
+      (insert (life-calendar--render-calendar birth-time life-calendar-years))
+      ;; Go to current week, or first week if current week not found
+      (let ((pos (life-calendar--find-week (car age) (cdr age))))
+        (goto-char (or pos
+                       (life-calendar--find-next-week (point-min))))))))
+
+(defun life-calendar-first-week ()
+  "Move point to the first week of life (year 0, week 0)."
+  (interactive)
+  (let ((pos (life-calendar--find-next-week (point-min))))
+    (if pos
+        (goto-char pos)
+      (message "No weeks found"))))
+
+(defun life-calendar-last-week ()
+  "Move point to the last week in the calendar."
+  (interactive)
+  (let ((pos (life-calendar--find-previous-week (point-max))))
+    (if pos
+        (goto-char pos)
+      (message "No weeks found"))))
+
+(defun life-calendar-beginning-of-row ()
+  "Move point to the first week in the current visual row."
+  (interactive)
+  (let ((pos (save-excursion
+               (beginning-of-line)
+               (life-calendar--find-next-week (point)))))
+    (if pos
+        (goto-char pos)
+      (message "No week in row"))))
+
+(defun life-calendar-end-of-row ()
+  "Move point to the last week in the current visual row."
+  (interactive)
+  (let ((pos (save-excursion
+               (end-of-line)
+               (life-calendar--find-previous-week (point)))))
+    (if pos
+        (goto-char pos)
+      (message "No week in row"))))
+
+(defun life-calendar-next-week ()
+  "Move point to the next week square (one square to the right)."
+  (interactive)
+  (if-let ((pos (life-calendar--find-next-week (point))))
+      (goto-char pos)
+    (message "No next week")))
+
+(defun life-calendar-previous-week ()
+  "Move point to the previous week square (one square to the left)."
+  (interactive)
+  (if-let ((pos (life-calendar--find-previous-week (point))))
+      (goto-char pos)
+    (message "No previous week")))
+
+(defun life-calendar-next-year ()
+  "Move point to the same week in the next year."
+  (interactive)
+  (life-calendar--move-years 1 "No next year"))
+
+(defun life-calendar-previous-year ()
+  "Move point to the same week in the previous year."
+  (interactive)
+  (life-calendar--move-years -1 "No previous year"))
+
+(defun life-calendar-next-row ()
+  "Move point to the same week in the next visual row.
+With multi-column display, this moves down by the number of columns."
+  (interactive)
+  (life-calendar--move-years life-calendar--num-columns "No next row"))
+
+(defun life-calendar-previous-row ()
+  "Move point to the same week in the previous visual row.
+With multi-column display, this moves up by the number of columns."
+  (interactive)
+  (life-calendar--move-years (- life-calendar--num-columns) "No previous row"))
+
+(defun life-calendar-goto-current-week ()
+  "Move point to the current week (today)."
+  (interactive)
+  (let* ((birthday (life-calendar--ensure-birthday))
+         (birth-time (life-calendar--parse-date birthday))
+         (age (life-calendar--current-age birth-time))
+         (pos (life-calendar--find-week (car age) (cdr age))))
+    (if pos
+        (goto-char pos)
+      (message "Current week not found in calendar"))))
+
+(defun life-calendar-mouse-set-point (event)
+  "Move point to week square at mouse click EVENT.
+If the click is not on a week square, beep."
+  (interactive "e")
+  (let* ((end (event-end event))
+         (win (posn-window end))
+         (pos (posn-point end)))
+    (when (and (windowp win)
+               (integer-or-marker-p pos))
+      (select-window win)
+      (if (life-calendar--on-week-p pos)
+          (goto-char pos)
+        (ding)))))
+
 ;;; Major Mode
 
 (defvar life-calendar-mode-map
   (let ((map (make-sparse-keymap)))
+    (suppress-keymap map)
+    (dolist (c '(narrow-to-defun narrow-to-page narrow-to-region
+                 set-mark-command mark-defun mark-page mark-paragraph
+                 mark-sexp mark-whole-buffer mark-word
+                 downcase-region upcase-region
+                 kill-line kill-region copy-region-as-kill
+                 kill-sentence kill-word
+                 capitalize-region write-region
+                 scroll-down-command scroll-up-command
+                 backward-paragraph forward-paragraph
+                 move-to-window-line-top-bottom
+                 tab-to-tab-stop back-to-indentation))
+      (define-key map `[remap ,c] 'life-calendar-not-implemented))
+    ;; Basic commands
     (define-key map (kbd "q") #'quit-window)
     (define-key map (kbd "g") #'life-calendar-refresh)
+    ;; Week navigation (remap character movement)
+    (define-key map (kbd "f") #'life-calendar-next-week)
+    (define-key map (kbd "b") #'life-calendar-previous-week)
+    (define-key map [remap forward-char] #'life-calendar-next-week)
+    (define-key map [remap backward-char] #'life-calendar-previous-week)
+    (define-key map [remap right-char] #'life-calendar-next-week)
+    (define-key map [remap left-char] #'life-calendar-previous-week)
+    ;; Row navigation (remap line movement)
+    (define-key map (kbd "n") #'life-calendar-next-row)
+    (define-key map (kbd "p") #'life-calendar-previous-row)
+    (define-key map [remap next-line] #'life-calendar-next-row)
+    (define-key map [remap previous-line] #'life-calendar-previous-row)
+    ;; Year navigation
+    (define-key map (kbd "]") #'life-calendar-next-year)
+    (define-key map (kbd "[") #'life-calendar-previous-year)
+    (define-key map [remap right-word] #'life-calendar-next-year)
+    (define-key map [remap left-word] #'life-calendar-previous-year)
+    (define-key map [remap forward-word] #'life-calendar-next-year)
+    (define-key map [remap backward-word] #'life-calendar-previous-year)
+    ;; First/last week of calendar (remap buffer beginning/end)
+    (define-key map [remap beginning-of-buffer] #'life-calendar-first-week)
+    (define-key map [remap end-of-buffer] #'life-calendar-last-week)
+    ;; Beginning/end of row (remap line beginning/end)
+    (define-key map [remap move-beginning-of-line] #'life-calendar-beginning-of-row)
+    (define-key map [remap move-end-of-line] #'life-calendar-end-of-row)
+    ;; Jump to current week
+    (define-key map (kbd ".") #'life-calendar-goto-current-week)
+    ;; Mouse navigation
+    (define-key map [down-mouse-1] #'ignore)
+    (define-key map [drag-mouse-1] #'life-calendar-mouse-set-point)
+    (define-key map [mouse-1] #'life-calendar-mouse-set-point)
     map)
   "Keymap for `life-calendar-mode'.")
 
@@ -370,19 +648,6 @@ and save the value for future sessions."
 \\{life-calendar-mode-map}"
   (setq buffer-read-only t)
   (setq truncate-lines t))
-
-;;; Commands
-
-(defun life-calendar-refresh ()
-  "Refresh the life calendar display."
-  (interactive)
-  (when (eq major-mode 'life-calendar-mode)
-    (let* ((birthday (life-calendar--ensure-birthday))
-           (birth-time (life-calendar--parse-date birthday))
-           (inhibit-read-only t))
-      (erase-buffer)
-      (insert (life-calendar--render-calendar birth-time life-calendar-years))
-      (goto-char (point-min)))))
 
 ;;;###autoload
 (defun life-calendar ()
@@ -397,13 +662,20 @@ Press \\<life-calendar-mode-map>\\[quit-window] to close the calendar,
 \\<life-calendar-mode-map>\\[life-calendar-refresh] to refresh."
   (interactive)
   (let* ((birthday (life-calendar--ensure-birthday))
-         (birth-time (life-calendar--parse-date birthday)))
+         (birth-time (life-calendar--parse-date birthday))
+         (age (life-calendar--current-age birth-time)))
     (switch-to-buffer (get-buffer-create "*Life Calendar*"))
+    ;; Set mode first, before rendering, because `define-derived-mode'
+    ;; calls `kill-all-local-variables' which would wipe buffer-local
+    ;; variables set during rendering.
+    (life-calendar-mode)
     (let ((inhibit-read-only t))
       (erase-buffer)
-      (insert (life-calendar--render-calendar birth-time life-calendar-years)))
-    (goto-char (point-min))
-    (life-calendar-mode)))
+      (insert (life-calendar--render-calendar birth-time life-calendar-years))
+      ;; Go to current week, or first week if current week not found
+      (let ((pos (life-calendar--find-week (car age) (cdr age))))
+        (goto-char (or pos
+                       (life-calendar--find-next-week (point-min))))))))
 
 (provide 'life-calendar)
 

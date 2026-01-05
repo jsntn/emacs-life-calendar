@@ -51,10 +51,24 @@ On first use, you will be prompted to enter your birthday using org-mode's date 
 
 ### Keybindings
 
+#### Navigation
+
+| Key | Action |
+|-----|--------|
+| `f`, `b`, `C-f`, `C-b`, arrows | Move by week |
+| `n`, `p`, `C-n`, `C-p`, up/down | Move by row (multiple years in multi-column view) |
+| `]`, `[`, `M-f`, `M-b` | Move by year |
+| `M-<`, `M->` | Jump to first/last week |
+| `C-a`, `C-e`, Home, End | Beginning/end of row |
+| `.` | Jump to current week |
+
+#### General
+
 | Key | Action |
 |-----|--------|
 | `q` | Close the calendar |
 | `g` | Refresh the display |
+| `?` | Show help (keybindings) |
 
 ## Customization
 
