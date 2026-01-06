@@ -30,6 +30,12 @@
 ;;   M-<, M->              -- first/last week
 ;;   C-a, C-e, Home/End    -- beginning/end of row
 ;;   .                     -- jump to current week
+;;
+;; Life chapters (marking significant dates):
+;;   +                     -- add a life chapter
+;;   -                     -- remove a life chapter from current week
+;;
+;; Other:
 ;;   g                     -- refresh
 ;;   ?                     -- help (show keybindings)
 ;;   q                     -- quit
@@ -40,6 +46,7 @@
 ;;; Code:
 
 (require 'calendar)
+(require 'seq)
 
 ;;; Customization
 
@@ -75,6 +82,11 @@ If nil, you will be prompted to enter it on first use."
   :type 'string
   :group 'life-calendar)
 
+(defcustom life-calendar-chapter-char "★"
+  "Character to display for weeks with life chapters."
+  :type 'string
+  :group 'life-calendar)
+
 (defcustom life-calendar-week-start-day 'birthday
   "Day of week when a new week of life is counted.
 If `birthday', use the day of week you were born (default).
@@ -95,6 +107,15 @@ If nil, automatically display as many columns as fit in the window.
 If a positive integer, display exactly that many columns."
   :type '(choice (const :tag "Auto (fit to window)" nil)
                  (integer :tag "Fixed number of columns"))
+  :group 'life-calendar)
+
+(defcustom life-calendar-chapters nil
+  "List of life chapters marking significant dates.
+Each chapter is a cons cell (DATE . DESCRIPTION) where DATE is a
+string in YYYY-MM-DD format and DESCRIPTION is a string describing
+the life event or milestone."
+  :type '(alist :key-type (string :tag "Date (YYYY-MM-DD)")
+                :value-type (string :tag "Description"))
   :group 'life-calendar)
 
 ;;; Faces
@@ -122,6 +143,11 @@ If a positive integer, display exactly that many columns."
 (defface life-calendar-header-face
   '((t :inherit bold :height 1.2))
   "Face for the header in the life calendar."
+  :group 'life-calendar)
+
+(defface life-calendar-chapter-face
+  '((t :inherit success))
+  "Face for weeks with life chapters in the life calendar."
   :group 'life-calendar)
 
 ;;; Layout
@@ -176,6 +202,23 @@ Otherwise, calculate based on window width."
                                 (decoded-time-month decoded)
                                 (decoded-time-day decoded))))
 
+(defun life-calendar--read-date-string (prompt)
+  "Read a date from the user with PROMPT, returning YYYY-MM-DD string.
+Validates the date format and signals an error if invalid or empty."
+  (let ((input (read-string (concat prompt " (YYYY-MM-DD): "))))
+    (cond
+     ((string-empty-p input)
+      (user-error "Date is required"))
+     ((string-match "\\`\\([0-9]\\{4\\}\\)-\\([0-9]\\{2\\}\\)-\\([0-9]\\{2\\}\\)\\'" input)
+      (let ((year (string-to-number (match-string 1 input)))
+            (month (string-to-number (match-string 2 input)))
+            (day (string-to-number (match-string 3 input))))
+        (if (calendar-date-is-valid-p (list month day year))
+            input
+          (user-error "Invalid date: %s" input))))
+     (t
+      (user-error "Invalid date format.  Please use YYYY-MM-DD")))))
+
 (defun life-calendar--parse-date (date-string)
   "Parse DATE-STRING in YYYY-MM-DD format to a time value."
   (pcase-let ((`(,year ,month ,day)
@@ -207,23 +250,6 @@ Otherwise, calculate based on window width."
   "Add DAYS to TIME and return the new time."
   (time-add time (seconds-to-time (* days 24 60 60))))
 
-(defun life-calendar--read-date (prompt)
-  "Read a date from the user with PROMPT, returning YYYY-MM-DD string.
-Validates the date format and signals an error if invalid or empty."
-  (let ((input (read-string (concat prompt " (YYYY-MM-DD): "))))
-    (cond
-     ((string-empty-p input)
-      (user-error "Date is required"))
-     ((string-match "\\`\\([0-9]\\{4\\}\\)-\\([0-9]\\{2\\}\\)-\\([0-9]\\{2\\}\\)\\'" input)
-      (let ((year (string-to-number (match-string 1 input)))
-            (month (string-to-number (match-string 2 input)))
-            (day (string-to-number (match-string 3 input))))
-        (if (calendar-date-is-valid-p (list month day year))
-            input
-          (user-error "Invalid date: %s" input))))
-     (t
-      (user-error "Invalid date format.  Please use YYYY-MM-DD")))))
-
 ;;; Age and Week Calculation
 
 (defun life-calendar--nth-birthday (birth-time n)
@@ -248,19 +274,19 @@ of BIRTH-TIME.  Otherwise convert the configured day symbol to a number."
          (days-back (mod (- time-dow dow) 7)))
     (life-calendar--add-days time (- days-back))))
 
-(defun life-calendar--count-completed-weeks (start-week-dow from-date before-date)
-  "Count weeks that complete in the interval [FROM-DATE, BEFORE-DATE).
+(defun life-calendar--count-completed-weeks (start-week-dow from-time before-time)
+  "Count weeks that complete in the interval [FROM-TIME, BEFORE-TIME).
 START-WEEK-DOW is the day of week (0=Sunday, ..., 6=Saturday) when weeks start.
 A week is counted if its completion day (last day) falls within the interval."
   (let* (;; Find the completion day (last day) of the week containing
-         ;; `from-date'.  Since a week that completes before `from-date'
+         ;; FROM-TIME.  Since a week that completes before FROM-TIME
          ;; doesn't belong to the interval, this is the first `week-completion'
          ;; to consider.
          (first-week-start (life-calendar--last-week-start-on-or-before
-                            from-date start-week-dow))
+                            from-time start-week-dow))
          (week-completion (life-calendar--add-days first-week-start 6))
          (weeks 0))
-    (while (time-less-p week-completion before-date)
+    (while (time-less-p week-completion before-time)
       (setq weeks (1+ weeks))
       (setq week-completion (life-calendar--add-days week-completion 7)))
     weeks))
@@ -275,6 +301,30 @@ This is typically 52, occasionally 53."
    (life-calendar--nth-birthday birth-time year-num)
    (life-calendar--nth-birthday birth-time (1+ year-num))))
 
+(defun life-calendar--time-to-year-week (birth-time time)
+  "Convert TIME to (YEAR . WEEK) relative to BIRTH-TIME.
+Returns the number of complete years and weeks since birth.
+Returns nil if TIME is before BIRTH-TIME."
+  ;; Calculate years by decoding the time difference.
+  ;; Subtracting the epoch year converts the decoded year to a duration.
+  (let ((years (- (decoded-time-year
+                   (life-calendar--decode-date (time-subtract time birth-time)))
+                  (decoded-time-year
+                   (life-calendar--decode-date 0)))))
+    (when (>= years 0)
+      (let* ((year-start (life-calendar--nth-birthday birth-time years))
+             (weeks (life-calendar--count-completed-weeks
+                     (life-calendar--effective-week-start-dow birth-time)
+                     year-start
+                     time)))
+        (cons years weeks)))))
+
+(defun life-calendar--date-string-to-year-week (birth-time date-string)
+  "Convert DATE-STRING to (YEAR . WEEK) relative to BIRTH-TIME.
+Returns nil if the date is before birth."
+  (life-calendar--time-to-year-week
+   birth-time (life-calendar--parse-date date-string)))
+
 (defun life-calendar--current-age (birth-time)
   "Return (YEARS-LIVED . WEEKS-LIVED) for today given BIRTH-TIME.
 YEARS-LIVED is the number of complete years, WEEKS-LIVED is the number
@@ -282,19 +332,39 @@ of complete weeks within the current year.  Uses the configured week
 start day for accurate calculation.
 Signals an error if BIRTH-TIME is in the future."
   (life-calendar--validate-birthday birth-time)
-  (let* ((today (life-calendar--current-date))
-         ;; Calculate years lived by decoding the time difference.
-         ;; Subtracting the epoch year converts the decoded year to a duration.
-         (years-lived (- (decoded-time-year
-                          (life-calendar--decode-date (time-subtract today birth-time)))
-                         (decoded-time-year
-                          (life-calendar--decode-date 0))))
-         (current-birthday (life-calendar--nth-birthday birth-time years-lived))
-         (weeks-lived (life-calendar--count-completed-weeks
-                       (life-calendar--effective-week-start-dow birth-time)
-                       current-birthday
-                       today)))
-    (cons years-lived weeks-lived)))
+  (life-calendar--time-to-year-week birth-time (life-calendar--current-date)))
+
+;;; Life Chapters
+
+(defun life-calendar--build-chapters-index (birth-time)
+  "Build a hash table mapping (YEAR . WEEK) to list of chapter descriptions.
+Uses BIRTH-TIME to convert chapter dates to year/week coordinates."
+  (let ((index (make-hash-table :test 'equal)))
+    (dolist (chapter life-calendar-chapters)
+      (let* ((date (car chapter))
+             (description (cdr chapter))
+             (year-week (life-calendar--date-string-to-year-week birth-time date)))
+        (when year-week
+          (push (format "%s: %s" date description) (gethash year-week index)))))
+    index))
+
+(defvar-local life-calendar--chapters-index nil
+  "Hash table mapping (YEAR . WEEK) to list of chapter descriptions.
+Built during rendering for efficient lookup.")
+
+(defun life-calendar--chapters-for-week (year week)
+  "Return list of chapter descriptions for YEAR and WEEK.
+Returns nil if no chapters exist for this week."
+  (when life-calendar--chapters-index
+    (gethash (cons year week) life-calendar--chapters-index)))
+
+(defun life-calendar--show-chapters-at-point ()
+  "Display chapter descriptions for the week at point in the echo area."
+  (when (eq major-mode 'life-calendar-mode)
+    (let ((chapters (get-text-property (point) 'life-calendar-chapters)))
+      (when chapters
+        (message "%s"
+                 (mapconcat #'identity chapters "\n"))))))
 
 ;;; Rendering
 
@@ -339,11 +409,18 @@ Returns a string of exactly `life-calendar--column-width' characters."
              (is-current-week (and is-current-year (= week weeks-lived)))
              (is-past-week (or is-past-year
                                (and is-current-year (< week weeks-lived))))
+             (chapters (life-calendar--chapters-for-week year week))
+             (has-chapter (not (null chapters)))
+             ;; Face: current-week takes priority so today is always highlighted.
              (face (cond
                     (is-current-week 'life-calendar-current-face)
+                    (has-chapter 'life-calendar-chapter-face)
                     (is-past-week 'life-calendar-past-face)
                     (t 'life-calendar-future-face)))
+             ;; Character: chapter takes priority so chapter marker is visible
+             ;; even on the current week.
              (char-str (cond
+                        (has-chapter life-calendar-chapter-char)
                         (is-current-week life-calendar-current-char)
                         (is-past-week life-calendar-past-char)
                         (t life-calendar-future-char)))
@@ -351,7 +428,8 @@ Returns a string of exactly `life-calendar--column-width' characters."
                                'face face
                                'life-calendar-week-p t
                                'life-calendar-year year
-                               'life-calendar-week week)))
+                               'life-calendar-week week
+                               'life-calendar-chapters chapters)))
         (push char parts)))
     ;; Pad to full column width if needed (some years have 52 weeks)
     (let* ((content (apply #'concat (nreverse parts)))
@@ -364,7 +442,8 @@ Returns a string of exactly `life-calendar--column-width' characters."
 (defun life-calendar--render-calendar (birth-time years)
   "Render the life calendar for BIRTH-TIME with YEARS total years.
 Returns a string containing the rendered calendar.
-Also sets `life-calendar--num-columns' as a side effect."
+Also sets `life-calendar--num-columns' and `life-calendar--chapters-index'
+as side effects."
   (let* ((age (life-calendar--current-age birth-time))
          (years-lived (car age))
          (weeks-lived (cdr age))
@@ -373,6 +452,8 @@ Also sets `life-calendar--num-columns' as a side effect."
          (gap (make-string life-calendar--column-gap ?\s))
          (parts '()))
     (setq life-calendar--num-columns num-columns)
+    (setq life-calendar--chapters-index
+          (life-calendar--build-chapters-index birth-time))
     ;; Header
     (push (propertize
            (format "Life Calendar - %d years, %d weeks old\n\n"
@@ -402,7 +483,7 @@ Also sets `life-calendar--num-columns' as a side effect."
 If not set, prompt the user to enter their birthday and save the value
 for future sessions."
   (unless life-calendar-birthday
-    (let ((date (life-calendar--read-date "Enter your birthday")))
+    (let ((date (life-calendar--read-date-string "Enter your birthday")))
       (customize-save-variable 'life-calendar-birthday date)
       (message "Birthday saved: %s" date)))
   life-calendar-birthday)
@@ -493,18 +574,33 @@ ERROR-MESSAGE is shown when target year doesn't exist."
   (error "%s not available in life-calendar"
          (global-key-binding (this-command-keys))))
 
-(defun life-calendar-refresh ()
-  "Refresh the life calendar display."
+(defun life-calendar-refresh (&optional target)
+  "Refresh the life calendar display.
+TARGET controls where point moves after refresh:
+  nil         -- move to current week (default)
+  t           -- preserve current position
+  DATE-STRING -- move to the week containing this date (YYYY-MM-DD format)"
   (interactive)
   (when (eq major-mode 'life-calendar-mode)
     (let* ((birthday (life-calendar--ensure-birthday))
            (birth-time (life-calendar--parse-date birthday))
            (age (life-calendar--current-age birth-time))
+           (saved-week (when (eq target t)
+                         (life-calendar--week-at-point (point))))
+           (target-week (cond
+                         (saved-week saved-week)
+                         ((stringp target)
+                          (life-calendar--date-string-to-year-week
+                           birth-time target))
+                         (t nil)))
            (inhibit-read-only t))
       (erase-buffer)
       (insert (life-calendar--render-calendar birth-time life-calendar-years))
-      ;; Go to current week, or first week if current week not found
-      (let ((pos (life-calendar--find-week (car age) (cdr age))))
+      ;; Navigate to target week or current week.
+      (let ((pos (if target-week
+                     (life-calendar--find-week (car target-week)
+                                               (cdr target-week))
+                   (life-calendar--find-week (car age) (cdr age)))))
         (goto-char (or pos
                        (life-calendar--find-next-week (point-min))))))))
 
@@ -591,6 +687,51 @@ With multi-column display, this moves up by the number of columns."
         (goto-char pos)
       (message "Current week not found in calendar"))))
 
+(defun life-calendar-add-chapter ()
+  "Add a new life chapter.
+Prompts for a date and description, saves to `life-calendar-chapters',
+refreshes the display, and moves point to the new chapter's week."
+  (interactive)
+  (let* ((date (life-calendar--read-date-string "Chapter date"))
+         (description (when date (read-string "Chapter description: "))))
+    (when (and date (not (string-empty-p description)))
+      (customize-save-variable
+       'life-calendar-chapters
+       (cons (cons date description) life-calendar-chapters))
+      (life-calendar-refresh date)
+      (message "Life chapter added: %s" description))))
+
+(defun life-calendar-remove-chapter ()
+  "Remove a life chapter from the current week.
+If the week has multiple chapters, prompts to select which one to remove."
+  (interactive)
+  (let ((chapters (get-text-property (point) 'life-calendar-chapters)))
+    (if (not chapters)
+        (message "No life chapters at this week")
+      (let* ((to-remove (if (= (length chapters) 1)
+                            (car chapters)
+                          (completing-read "Remove chapter: " chapters nil t)))
+             (year (get-text-property (point) 'life-calendar-year))
+             (week (get-text-property (point) 'life-calendar-week))
+             (birthday (life-calendar--ensure-birthday))
+             (birth-time (life-calendar--parse-date birthday)))
+        (when (yes-or-no-p (format "Remove chapter \"%s\"? " to-remove))
+          (customize-save-variable
+           'life-calendar-chapters
+           (seq-remove
+            (lambda (chapter)
+              (let ((chapter-year-week
+                     (life-calendar--date-string-to-year-week
+                      birth-time (car chapter))))
+                (and chapter-year-week
+                     (= (car chapter-year-week) year)
+                     (= (cdr chapter-year-week) week)
+                     (string= (format "%s: %s" (car chapter) (cdr chapter))
+                              to-remove))))
+            life-calendar-chapters))
+          (life-calendar-refresh t)
+          (message "Life chapter removed: %s" to-remove))))))
+
 (defun life-calendar-mouse-set-point (event)
   "Move point to week square at mouse click EVENT.
 If the click is not on a week square, beep."
@@ -652,6 +793,9 @@ If the click is not on a week square, beep."
     (define-key map [remap move-end-of-line] #'life-calendar-end-of-row)
     ;; Jump to current week
     (define-key map (kbd ".") #'life-calendar-goto-current-week)
+    ;; Life chapters
+    (define-key map (kbd "+") #'life-calendar-add-chapter)
+    (define-key map (kbd "-") #'life-calendar-remove-chapter)
     ;; Mouse navigation
     (define-key map [down-mouse-1] #'ignore)
     (define-key map [drag-mouse-1] #'life-calendar-mouse-set-point)
@@ -664,7 +808,8 @@ If the click is not on a week square, beep."
 
 \\{life-calendar-mode-map}"
   (setq buffer-read-only t)
-  (setq truncate-lines t))
+  (setq truncate-lines t)
+  (add-hook 'post-command-hook #'life-calendar--show-chapters-at-point nil t))
 
 ;;;###autoload
 (defun life-calendar ()
