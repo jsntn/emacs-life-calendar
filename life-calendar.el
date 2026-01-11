@@ -4,7 +4,7 @@
 
 ;; Author: Vadzim Shender <https://github.com/vshender>
 ;; URL: https://github.com/vshender/emacs-life-calendar
-;; Version: 0.1.0
+;; Version: 0.2.0
 ;; Keywords: calendar, visualization
 ;; Package-Requires: ((emacs "27.1"))
 ;; SPDX-License-Identifier: ISC
