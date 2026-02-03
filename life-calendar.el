@@ -172,6 +172,8 @@ Example: \"~/.emacs.d/life-calendar-data.el\""
 (defun life-calendar--save-to-file (variable value)
   "Save VARIABLE with VALUE to `life-calendar-data-file'.
 If `life-calendar-data-file' is nil, falls back to `customize-save-variable'."
+  ;; Set the variable in the current session
+  (set variable value)
   (if life-calendar-data-file
       (progn
         ;; Create directory if it doesn't exist
