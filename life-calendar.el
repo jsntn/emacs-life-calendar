@@ -403,6 +403,22 @@ of complete weeks within the current year.  Uses the configured week
 start day for accurate calculation."
   (life-calendar--time-to-year-week birth-time (life-calendar--current-date)))
 
+(defun life-calendar--year-week-to-date-string (birth-time year week)
+  "Convert YEAR and WEEK to a date string (YYYY-MM-DD) relative to BIRTH-TIME.
+Returns the start date of the given week in the given year of life."
+  (let* ((year-start (life-calendar--nth-birthday birth-time year))
+         (start-week-dow (life-calendar--effective-week-start-dow birth-time))
+         ;; Find the start of the first week of this year
+         (first-week-start (life-calendar--last-week-start-on-or-before
+                            year-start start-week-dow))
+         ;; Add 7 days for each week to get to the target week
+         (week-start (life-calendar--add-days first-week-start (* week 7)))
+         (decoded (life-calendar--decode-date week-start)))
+    (format "%04d-%02d-%02d"
+            (decoded-time-year decoded)
+            (decoded-time-month decoded)
+            (decoded-time-day decoded))))
+
 ;;; Life Chapters
 
 (defun life-calendar--build-chapters-index (birth-time)
@@ -438,6 +454,10 @@ Invalid chapters are skipped with a warning."
   "Hash table mapping (YEAR . WEEK) to list of chapter descriptions.
 Built during rendering for efficient lookup.")
 
+(defvar-local life-calendar--birth-time nil
+  "Birth time as a time value.
+Set during rendering for use in date calculations.")
+
 (defun life-calendar--chapters-for-week (year week)
   "Return list of chapter descriptions for YEAR and WEEK.
 Returns nil if no chapters exist for this week."
@@ -445,11 +465,18 @@ Returns nil if no chapters exist for this week."
     (gethash (cons year week) life-calendar--chapters-index)))
 
 (defun life-calendar--show-chapters-at-point ()
-  "Display chapter descriptions for the week at point in the echo area."
-  (let ((chapters (get-text-property (point) 'life-calendar-chapters)))
-    (when chapters
-      (message "%s"
-               (mapconcat #'identity chapters "\n")))))
+  "Display date and chapter descriptions for the week at point in the echo area."
+  (let ((year (get-text-property (point) 'life-calendar-year))
+        (week (get-text-property (point) 'life-calendar-week))
+        (chapters (get-text-property (point) 'life-calendar-chapters)))
+    (when (and year week life-calendar--birth-time)
+      (let* ((date-str (life-calendar--year-week-to-date-string
+                        life-calendar--birth-time year week))
+             (msg (if chapters
+                      (concat date-str "\n"
+                              (mapconcat #'identity chapters "\n"))
+                    date-str)))
+        (message "%s" msg)))))
 
 ;;; Rendering
 
@@ -538,6 +565,7 @@ as side effects."
     (setq life-calendar--num-columns num-columns)
     (setq life-calendar--chapters-index
           (life-calendar--build-chapters-index birth-time))
+    (setq life-calendar--birth-time birth-time)
     ;; Header
     (push (propertize
            (format "Life Calendar - %d years, %d weeks old\n\n"
