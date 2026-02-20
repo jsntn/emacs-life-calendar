@@ -954,8 +954,13 @@ same week of life across different years.  Results are shown in a separate buffe
                                'face 'bold))
             (if same-month-events
                 (progn
-                  (dolist (event same-month-events)
-                    (insert (format "  %s: %s\n" (car event) (cdr event))))
+		  (dolist (event same-month-events)
+		    (let ((event-year-week (life-calendar--date-string-to-year-week
+					    birth-time (car event))))
+		      (insert (format "  %s (Year %2d): %s\n"
+				      (car event)
+				      (car event-year-week)
+				      (cdr event)))))
                   (insert "\n"))
               (insert "  (none)\n\n"))
             ;; Same week events
@@ -963,12 +968,12 @@ same week of life across different years.  Results are shown in a separate buffe
                                'face 'bold))
             (if same-week-events
                 (dolist (event same-week-events)
-                  (let ((event-year-week (life-calendar--date-string-to-year-week
-                                          birth-time (car event))))
-                    (insert (format "  Year %d: %s: %s\n"
-                                    (car event-year-week)
-                                    (car event)
-                                    (cdr event)))))
+		    (let ((event-year-week (life-calendar--date-string-to-year-week
+					    birth-time (car event))))
+                      (insert (format "  %s (Year %2d): %s\n"
+				      (car event)
+				      (car event-year-week)
+				      (cdr event)))))
               (insert "  (none)\n"))
             (goto-char (point-min)))
           (view-mode))
