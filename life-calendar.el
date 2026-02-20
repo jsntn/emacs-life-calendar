@@ -921,11 +921,13 @@ same week of life across different years.  Results are shown in a separate buffe
             (let* ((chapter-time (life-calendar--parse-date date))
                    (chapter-decoded (life-calendar--decode-date chapter-time))
                    (chapter-month (decoded-time-month chapter-decoded))
+                   (chapter-year (decoded-time-year chapter-decoded))
+                   (current-year (decoded-time-year current-decoded))
                    (chapter-year-week (life-calendar--date-string-to-year-week
                                        birth-time date)))
               ;; Check if same calendar month, but different year
               (when (and (= chapter-month current-month)
-                         (not (string= date current-date-str)))
+                         (/= chapter-year current-year))
                 (push (cons date description) same-month-events))
               ;; Check if same week of life, but different year
               (when (and chapter-year-week
