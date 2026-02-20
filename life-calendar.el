@@ -34,7 +34,7 @@
 ;; Life chapters (marking significant dates):
 ;;   +                     -- add a life chapter
 ;;   -                     -- remove a life chapter from current week
-;;   h                     -- show historical events in same week
+;;   h                     -- show historical events in same month/week
 ;;
 ;; Other:
 ;;   g                     -- refresh
@@ -896,9 +896,9 @@ If the week has multiple chapters, prompts to select which one to remove."
           (message "Life chapter removed: %s" to-remove))))))
 
 (defun life-calendar-show-history ()
-  "Show events that happened in the same week from history.
-Displays life chapters that occurred in the same week of life across
-different years.  Results are shown in a separate buffer."
+  "Show events that happened in the same month and week from history.
+Displays life chapters that occurred in the same calendar month or in the
+same week of life across different years.  Results are shown in a separate buffer."
   (interactive)
   (let* ((birthday (life-calendar--ensure-birthday))
          (birth-time (life-calendar--parse-date birthday))
@@ -908,20 +908,33 @@ different years.  Results are shown in a separate buffer."
       (user-error "Not on a week square"))
     (let* ((current-date-str (life-calendar--year-week-to-date-string
                               birth-time year week))
+           (current-date-time (life-calendar--parse-date current-date-str))
+           (current-decoded (life-calendar--decode-date current-date-time))
+           (current-month (decoded-time-month current-decoded))
+           (same-month-events nil)
            (same-week-events nil))
-      ;; Find events in the same week
+      ;; Find events in the same month and same week
       (dolist (chapter life-calendar-chapters)
         (let* ((date (car chapter))
                (description (cdr chapter)))
           (when (life-calendar--valid-date-string-p date)
-            (let ((chapter-year-week (life-calendar--date-string-to-year-week
-                                      birth-time date)))
+            (let* ((chapter-time (life-calendar--parse-date date))
+                   (chapter-decoded (life-calendar--decode-date chapter-time))
+                   (chapter-month (decoded-time-month chapter-decoded))
+                   (chapter-year-week (life-calendar--date-string-to-year-week
+                                       birth-time date)))
+              ;; Check if same calendar month, but different year
+              (when (and (= chapter-month current-month)
+                         (not (string= date current-date-str)))
+                (push (cons date description) same-month-events))
               ;; Check if same week of life, but different year
               (when (and chapter-year-week
                          (= (cdr chapter-year-week) week)
                          (/= (car chapter-year-week) year))
                 (push (cons date description) same-week-events))))))
       ;; Sort events by date
+      (setq same-month-events (sort same-month-events
+                                    (lambda (a b) (string< (car a) (car b)))))
       (setq same-week-events (sort same-week-events
                                    (lambda (a b) (string< (car a) (car b)))))
       ;; Display results
@@ -934,6 +947,15 @@ different years.  Results are shown in a separate buffer."
             (insert "\n\n")
             (insert (format "Current week: Year %d, Week %d (%s)\n\n"
                             year week current-date-str))
+            ;; Same month events
+            (insert (propertize "Events in the same calendar month:\n"
+                               'face 'bold))
+            (if same-month-events
+                (progn
+                  (dolist (event same-month-events)
+                    (insert (format "  %s: %s\n" (car event) (cdr event))))
+                  (insert "\n"))
+              (insert "  (none)\n\n"))
             ;; Same week events
             (insert (propertize (format "Events in the same week of life (week %d):\n" week)
                                'face 'bold))
