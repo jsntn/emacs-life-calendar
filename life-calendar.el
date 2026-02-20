@@ -376,7 +376,6 @@ This is typically 52, occasionally 53."
 (defun life-calendar--time-to-year-week (birth-time time)
   "Convert TIME to (YEAR . WEEK) relative to BIRTH-TIME.
 Returns the number of complete years and weeks since birth.
-The week count includes any week that completes on or before TIME.
 Returns nil if TIME is before BIRTH-TIME."
   ;; Calculate years by decoding the time difference.
   ;; Subtracting the epoch year converts the decoded year to a duration.
@@ -385,12 +384,17 @@ Returns nil if TIME is before BIRTH-TIME."
                   (decoded-time-year
                    (life-calendar--decode-date 0)))))
     (when (>= years 0)
-      (let* ((year-start (life-calendar--nth-birthday birth-time years))
-             (weeks (life-calendar--count-completed-weeks
-                     (life-calendar--effective-week-start-dow birth-time)
-                     year-start
-                     (life-calendar--add-days time 1))))
-        (cons years weeks)))))
+      (let* ((year-start (life-calendar--nth-birthday birth-time years)))
+        ;; Check if time is before year-start. If so, the year calculation
+        ;; was too high by 1 (can happen for dates just before birthday).
+        (when (time-less-p time year-start)
+          (setq years (1- years))
+          (setq year-start (life-calendar--nth-birthday birth-time years)))
+        (let ((weeks (life-calendar--count-completed-weeks
+                      (life-calendar--effective-week-start-dow birth-time)
+                      year-start
+                      (life-calendar--add-days time 1))))
+          (cons years weeks))))))
 
 (defun life-calendar--date-string-to-year-week (birth-time date-string)
   "Convert DATE-STRING to (YEAR . WEEK) relative to BIRTH-TIME.
