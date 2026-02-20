@@ -375,21 +375,34 @@ This is typically 52, occasionally 53."
 
 (defun life-calendar--time-to-year-week (birth-time time)
   "Convert TIME to (YEAR . WEEK) relative to BIRTH-TIME.
-Returns the number of complete years and weeks since birth.
+Returns (YEAR . WEEK) where YEAR is the number of complete years since birth,
+and WEEK is the week index (0-based) within that year.
 Returns nil if TIME is before BIRTH-TIME."
   ;; Calculate years by decoding the time difference.
   ;; Subtracting the epoch year converts the decoded year to a duration.
   (let ((years (- (decoded-time-year
-                   (life-calendar--decode-date (time-subtract time birth-time)))
-                  (decoded-time-year
-                   (life-calendar--decode-date 0)))))
+		   (life-calendar--decode-date (time-subtract time birth-time)))
+		  (decoded-time-year
+		   (life-calendar--decode-date 0)))))
     (when (>= years 0)
-      (let* ((year-start (life-calendar--nth-birthday birth-time years))
-             (weeks (life-calendar--count-completed-weeks
-                     (life-calendar--effective-week-start-dow birth-time)
-                     year-start
-                     time)))
-        (cons years weeks)))))
+      (let* ((year-start (life-calendar--nth-birthday birth-time years)))
+	;; Check if time is before year-start. If so, the year calculation
+	;; was too high by 1 (can happen for dates just before birthday).
+	(when (time-less-p time year-start)
+	  (setq years (1- years))
+	  (setq year-start (life-calendar--nth-birthday birth-time years)))
+	(let* ((weeks-in-year (life-calendar--count-weeks-in-year birth-time years))
+	       ;; Count completed weeks, adding 1 day to make the interval inclusive.
+	       ;; This ensures dates within a week are assigned to that week.
+	       ;; Clamp to (1- weeks-in-year) to ensure the week index stays within
+	       ;; the valid range [0, weeks-in-year-1], preventing boundary dates
+	       ;; (e.g., the day before a birthday) from mapping to a non-existent week.
+	       (weeks (min (life-calendar--count-completed-weeks
+			    (life-calendar--effective-week-start-dow birth-time)
+			    year-start
+			    (life-calendar--add-days time 1))
+			   (1- weeks-in-year))))
+	  (cons years weeks))))))
 
 (defun life-calendar--date-string-to-year-week (birth-time date-string)
   "Convert DATE-STRING to (YEAR . WEEK) relative to BIRTH-TIME.
