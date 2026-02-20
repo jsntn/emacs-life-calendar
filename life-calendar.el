@@ -34,6 +34,7 @@
 ;; Life chapters (marking significant dates):
 ;;   +                     -- add a life chapter
 ;;   -                     -- remove a life chapter from current week
+;;   h                     -- show historical events on same day/week
 ;;
 ;; Other:
 ;;   g                     -- refresh
