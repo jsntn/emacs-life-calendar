@@ -388,7 +388,7 @@ Returns nil if TIME is before BIRTH-TIME."
              (weeks (life-calendar--count-completed-weeks
                      (life-calendar--effective-week-start-dow birth-time)
                      year-start
-                     time)))
+                     (life-calendar--add-days time 1))))
         (cons years weeks)))))
 
 (defun life-calendar--date-string-to-year-week (birth-time date-string)
