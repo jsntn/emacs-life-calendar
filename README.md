@@ -102,8 +102,13 @@ Mark significant dates in your life (birthdays, graduations, jobs, etc.):
 |-----|--------|
 | `+` | Add a life chapter |
 | `-` | Remove a life chapter from current week |
+| `h` | Show historical events in same month/week |
 
 Chapters are displayed with a distinct character (`★` by default) and shown in the echo area when you navigate to them.
+
+The `h` key shows a summary of events that happened:
+- In the same calendar month from different years
+- In the same week of your life from different years
 
 #### Other
 
