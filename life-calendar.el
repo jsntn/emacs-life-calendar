@@ -964,7 +964,7 @@ same week of life across different years.  Results are shown in a separate buffe
                   (insert "\n"))
               (insert "  (none)\n\n"))
             ;; Same week events
-            (insert (propertize (format "Events in the same week of life (week %d):\n" week)
+            (insert (propertize (format "Events in the same life calendar week across years (week %d):\n" week)
                                'face 'bold))
             (if same-week-events
                 (dolist (event same-week-events)
