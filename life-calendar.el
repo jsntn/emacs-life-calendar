@@ -375,7 +375,9 @@ This is typically 52, occasionally 53."
 
 (defun life-calendar--time-to-year-week (birth-time time)
   "Convert TIME to (YEAR . WEEK) relative to BIRTH-TIME.
-Returns the number of complete years and weeks since birth.
+Returns (YEAR . WEEK) where YEAR is the number of complete years since
+birth and WEEK is the number of complete weeks within that year.
+A week is counted as complete when its last day has passed.
 Returns nil if TIME is before BIRTH-TIME."
   ;; Calculate years by decoding the time difference.
   ;; Subtracting the epoch year converts the decoded year to a duration.
