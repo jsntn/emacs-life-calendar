@@ -944,10 +944,12 @@ a separate buffer."
       ;; Display results
       (let ((buf (get-buffer-create "*Life Calendar History*")))
         (with-current-buffer buf
-          (let ((inhibit-read-only t))
+          (let ((inhibit-read-only t)
+                (header-text "Historical Events"))
             (erase-buffer)
-            (insert (propertize "Historical Events\n" 'face 'life-calendar-header-face))
-            (insert (propertize (make-string 60 ?─) 'face 'life-calendar-age-face))
+            (insert (propertize (concat header-text "\n") 'face 'life-calendar-header-face))
+            (insert (propertize (make-string (max 60 (length header-text)) ?─)
+                               'face 'life-calendar-age-face))
             (insert "\n\n")
             (insert (format "Current week: Year %d, Week %d (%s)\n\n"
                             year week current-date-str))
